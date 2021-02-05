@@ -1,0 +1,109 @@
+---
+title: "Weight Lifting Exercise Prediciton"
+author: "ray"
+date: "2/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+In this project, I used data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, and predict the manner in which they did the exercise. I preprocessed data with PCA, trained 3 random forests on training set and chose the best one with cross_validation. My best model gives a 95% accuracy on test set.
+
+## Data Preprocessing
+
+First, read data. The test set contains only 20 examples, which will not be used until the end of this project.
+
+```{r, message=FALSE}
+library(caret)
+library(dplyr)
+library(randomForest)
+trainSet <- read.csv("pml-training.csv", na.strings=c("","NA"))
+testSet <- read.csv("pml-testing.csv", na.strings=c("","NA"))
+```
+
+In the training data set, there are rows with new_window variable being yes. These are processed data summarizing each time window. As we are interested in raw data, we get rid of them. As we do this, there are columns without any entry, so we can delete them. Also, variables such as use_name and time stamp seem irrelevant here, we discard them as well.
+
+```{r}
+trainSet <- filter(trainSet, new_window == 'no')
+trainSet <- select(trainSet, -(1:6))
+trainSet <- Filter(function(x)!all(is.na(x)), trainSet)
+trainSet$classe <- factor(trainSet$classe)
+testSet <- select(testSet, -(1:6))
+testSet <- Filter(function(x)!all(is.na(x)), testSet)
+```
+
+Then we can slice the training set into 3 groups -- training data, validating data and testing data.
+
+```{r}
+set.seed(33833)
+inTrain <- createDataPartition(trainSet$classe, p=0.8, list=FALSE)
+training <- trainSet[inTrain, ]
+testing <- trainSet[-inTrain, ]
+inTrain <- createDataPartition(training$classe, p=0.8, list=FALSE)
+validating <- training[-inTrain,]
+training <- training[inTrain,]
+```
+
+The data set contains more than 80 variables, all of which are meant to measure body activity. Naturally, they are highly correlated. This motivates us to processing the data with PCA.
+
+```{r}
+preProc <- preProcess(training[,-54], method='pca', thresh=0.8)
+trainingPC <- predict(preProc, training[, -54])
+validatingPC <- predict(preProc, validating[, -54])
+testingPC <- predict(preProc, testing[, -54])
+```
+
+PCA reduces the dimension of predictors to 13, while retaining 80% variation.
+
+### Training and Cross-validation
+
+As it seems highly unlikely that our data are linearly separable, I choose to use random forest algorithm. The idea is to train 3 random forests with different tree numbers, and use validating data to choose the best-performing one.
+
+```{r}
+set.seed(1234)
+rf1 <- randomForest(training$classe ~ ., data = trainingPC, ntree = 10)
+rf2 <- randomForest(training$classe ~ ., data = trainingPC, ntree = 20)
+rf3 <- randomForest(training$classe ~ ., data = trainingPC, ntree = 40)
+```
+
+Now make predictions with these models on validating data and compare accuracy.
+
+```{r}
+cfmat1 <- confusionMatrix(validating$classe, predict(rf1, validatingPC))
+cfmat2 <- confusionMatrix(validating$classe, predict(rf2, validatingPC))
+cfmat3 <- confusionMatrix(validating$classe, predict(rf3, validatingPC))
+cfmat1$table
+cfmat1$overall
+cfmat2$table
+cfmat2$overall
+cfmat3$table
+cfmat3$overall
+```
+
+Model 3 with the most trees has the best performance. So I choose model 3 as the final model.
+
+## Testing
+
+Using testing data, I now estimate the out-of-example accuracy of my model.
+
+```{r}
+testPred <- predict(rf3, testingPC)
+testCf <- confusionMatrix(testing$classe, testPred)
+testCf$table
+testCf$overall
+```
+
+The model gives 95% accuracy on testing data, which is expected out-of-sample accuracy.
+
+## Applying on Test Cases
+
+The 20 test cases do not have labels. Therefore, there is no way to decide accuracy on this prediction.
+
+```{r}
+testPC <- predict(preProc, testSet[, -54])
+predict(rf3, testPC)
+```
